@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "probabilit-shifting-dice",
+  "compatibility_date": "2026-09-01",
+  "observability": {
+    "enabled": true,
+  },
+  "routes": [
+    {
+      "pattern": "dice.satooru.dev",
+      "custom_domain": true,
+    },
+  ],
+  "assets": {
+    "directory": "./dist",
+  },
+}

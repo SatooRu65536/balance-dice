@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "cf:deploy": "wrangler deploy",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -24,6 +25,7 @@
     "babel-plugin-react-compiler": "^1.0.0",
     "oxlint": "^1.79.0",
     "typescript": "~6.0.2",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "wrangler": "^4.127.1"
   }
 }
