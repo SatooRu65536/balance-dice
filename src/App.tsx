@@ -1,22 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const PIPS: Record<number, number[]> = { 1:[4], 2:[0,8], 3:[0,4,8], 4:[0,2,6,8], 5:[0,2,4,6,8], 6:[0,2,3,5,6,8] }
-const STORAGE_KEY = 'balance-dice-state-v1'
+type RoomState = { count:number; dice:number[]; history:number[]; strength:number; revision:number }
+type RoomAction = {type:'roll'} | {type:'changeCount';count:number} | {type:'setStrength';strength:number} | {type:'reset'}
 
-type SavedState = { count:number; dice:number[]; history:number[]; strength:number }
-
-function loadSavedState(): SavedState {
-  const fallback={count:2,dice:[3,4],history:[],strength:65}
-  try {
-    const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)??'null') as Partial<SavedState>|null
-    if(!saved)return fallback
-    const count=Number.isInteger(saved.count)&&saved.count!>=1&&saved.count!<=6?saved.count!:fallback.count
-    const dice=Array.isArray(saved.dice)&&saved.dice.length===count&&saved.dice.every(v=>Number.isInteger(v)&&v>=1&&v<=6)?saved.dice:fallback.dice
-    const history=Array.isArray(saved.history)&&saved.history.every(v=>Number.isInteger(v)&&v>=count&&v<=count*6)?saved.history:[]
-    const strength=typeof saved.strength==='number'&&saved.strength>=0&&saved.strength<=100?saved.strength:fallback.strength
-    return {count,dice:dice.length===count?dice:Array.from({length:count},()=>1),history,strength}
-  } catch { return fallback }
+function getRoomId() {
+  const url = new URL(window.location.href)
+  let room = url.searchParams.get('room')?.replace(/[^\w-]/g,'').slice(0,80)
+  if (!room) {
+    room = crypto.randomUUID().replaceAll('-','').slice(0,12)
+    url.searchParams.set('room',room)
+    history.replaceState(null,'',url)
+  }
+  return room
 }
 
 function makeDistribution(count: number) {
@@ -34,9 +31,44 @@ function Die({value, rolling}:{value:number; rolling:boolean}) {
 }
 
 export default function App() {
-  const [initialState]=useState(loadSavedState)
-  const [count,setCount]=useState(initialState.count), [dice,setDice]=useState(initialState.dice), [history,setHistory]=useState<number[]>(initialState.history)
-  const [strength,setStrength]=useState(initialState.strength), [rolling,setRolling]=useState(false)
+  const [roomId]=useState(getRoomId), [state,setState]=useState<RoomState|null>(null)
+  const [connection,setConnection]=useState<'connecting'|'connected'|'offline'>('connecting')
+  const [rolling,setRolling]=useState(false), socketRef=useRef<WebSocket|null>(null), reconnectRef=useRef<number>(0)
+  const {count=2,dice=[3,4],history=[],strength=65}=state??{}
+  const send=useCallback((action:RoomAction)=>{
+    if(socketRef.current?.readyState!==WebSocket.OPEN)return
+    socketRef.current.send(JSON.stringify(action))
+    if(action.type==='roll')setRolling(true)
+  },[])
+
+  useEffect(()=>{
+    let stopped=false, socket:WebSocket|undefined
+    const connect=()=>{
+      if(stopped)return
+      setConnection('connecting')
+      const protocol=location.protocol==='https:'?'wss:':'ws:'
+      socket=new WebSocket(`${protocol}//${location.host}/api/room?room=${encodeURIComponent(roomId)}`)
+      socketRef.current=socket
+      socket.onopen=()=>setConnection('connected')
+      socket.onmessage=event=>{
+        try {
+          const message=JSON.parse(event.data) as {type:string;state:RoomState}
+          if(message.type==='state')setState(previous=>{
+            if(previous&&message.state.history.length>previous.history.length)setRolling(true)
+            return message.state
+          })
+          window.setTimeout(()=>setRolling(false),420)
+        } catch { /* Ignore malformed server messages. */ }
+      }
+      socket.onclose=()=>{
+        if(stopped)return
+        setConnection('offline')
+        reconnectRef.current=window.setTimeout(connect,1500)
+      }
+    }
+    connect()
+    return()=>{stopped=true;clearTimeout(reconnectRef.current);socket?.close()}
+  },[roomId])
   const distribution=useMemo(()=>makeDistribution(count),[count])
   const stats=useMemo(()=>{
     const rolls=history.length, total=6**count
@@ -49,16 +81,7 @@ export default function App() {
     return rows.map(r=>({...r,adjusted:r.adjusted/weight}))
   },[count,distribution,history,strength])
 
-  const roll=useCallback(()=>{
-    if(rolling)return
-    setRolling(true)
-    let random=Math.random()
-    const chosen=stats.find(r=>(random-=r.adjusted)<=0)??stats.at(-1)!
-    const options=distribution.get(chosen.sum)!
-    setDice(options[Math.floor(Math.random()*options.length)])
-    setHistory(h=>[...h,chosen.sum])
-    window.setTimeout(()=>setRolling(false),420)
-  },[distribution,rolling,stats])
+  const roll=useCallback(()=>{if(!rolling&&connection==='connected')send({type:'roll'})},[connection,rolling,send])
   useEffect(()=>{
     const onKey=(e:KeyboardEvent)=>{
       const target=e.target as HTMLElement
@@ -68,23 +91,22 @@ export default function App() {
     window.addEventListener('keydown',onKey)
     return()=>window.removeEventListener('keydown',onKey)
   },[roll])
-  useEffect(()=>{
-    localStorage.setItem(STORAGE_KEY,JSON.stringify({count,dice,history,strength}))
-  },[count,dice,history,strength])
-  const changeCount=(n:number)=>{setCount(n);setDice(Array.from({length:n},()=>Math.ceil(Math.random()*6)));setHistory([])}
+  const changeCount=(n:number)=>send({type:'changeCount',count:n})
+  const share=async()=>{await navigator.clipboard.writeText(location.href);setCopied(true);window.setTimeout(()=>setCopied(false),1600)}
+  const [copied,setCopied]=useState(false)
   const max=Math.max(...stats.flatMap(r=>[r.adjusted,r.base,r.actual])), sum=dice.reduce((a,b)=>a+b,0)
 
   return <main>
-    <header><div className="brand"><b>⚄</b> Balance Dice</div><button className="reset" onClick={()=>setHistory([])} disabled={!history.length}>↻　リセット</button></header>
+    <header><div className="brand"><b>⚄</b> Balance Dice</div><div className="room-tools"><span className={`status ${connection}`}>{connection==='connected'?'共有中':connection==='connecting'?'接続中':'再接続中'}</span><button className="share" onClick={share}>{copied?'コピーしました':'招待リンクをコピー'}</button><button className="reset" onClick={()=>send({type:'reset'})} disabled={!history.length}>↻　リセット</button></div></header>
     <section className="hero">
       <div className="dice-stage"><div className="dice-row">{dice.map((v,i)=><Die key={i} value={v} rolling={rolling}/>)}</div><small>合計 <strong>{sum}</strong></small></div>
-      <button className="roll" onClick={roll} disabled={rolling}><span>⚄</span>{rolling?'抽選中…':'サイコロを振る'}</button><div className="shortcut">Space キーでも振れます</div>
+      <button className="roll" onClick={roll} disabled={rolling||connection!=='connected'}><span>⚄</span>{connection!=='connected'?'ルームに接続中…':rolling?'抽選中…':'サイコロを振る'}</button><div className="shortcut">Room: {roomId} ・ Space キーでも振れます</div>
     </section>
     <section className="dashboard">
       <div className="controls card">
         <div><label>サイコロの個数</label><div className="stepper"><button disabled={count===1} onClick={()=>changeCount(count-1)}>−</button><strong>{count}</strong><span>個</span><button disabled={count===6} onClick={()=>changeCount(count+1)}>＋</button></div></div>
         <div className="divider"/>
-        <div className="strength"><div className="label-row"><label>補正の強さ</label><b>{strength}%</b></div><input type="range" min="0" max="100" value={strength} onChange={e=>setStrength(+e.target.value)} style={{'--value':`${strength}%`} as React.CSSProperties}/><div className="range-label"><span>自然</span><span>強く補正</span></div></div>
+        <div className="strength"><div className="label-row"><label>補正の強さ</label><b>{strength}%</b></div><input type="range" min="0" max="100" value={strength} onChange={e=>send({type:'setStrength',strength:+e.target.value})} style={{'--value':`${strength}%`} as React.CSSProperties}/><div className="range-label"><span>自然</span><span>強く補正</span></div></div>
         <div className="divider"/><div className="trials"><label>試行回数</label><strong>{history.length}<small> 回</small></strong></div>
       </div>
       <div className="chart-card card">

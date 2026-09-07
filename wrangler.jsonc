@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "probabilit-shifting-dice",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-09-01",
   "observability": {
     "enabled": true,
@@ -13,5 +14,21 @@
   ],
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DICE_ROOMS",
+        "class_name": "DiceRoom",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["DiceRoom"],
+    },
+  ],
 }
