@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const PIPS: Record<number, number[]> = { 1:[4], 2:[0,8], 3:[0,4,8], 4:[0,2,6,8], 5:[0,2,4,6,8], 6:[0,2,3,5,6,8] }
-type RoomState = { count:number; dice:number[]; history:number[]; strength:number; revision:number }
-type RoomAction = {type:'roll'} | {type:'changeCount';count:number} | {type:'setStrength';strength:number} | {type:'reset'}
+type RoomState = { count:number; dice:number[]; history:number[]; diceHistory?:number[][]; strength:number; revision:number; turnMode?:boolean; turnOwner?:string|null }
+type RoomAction = {type:'roll';clientId:string} | {type:'undo';clientId:string} | {type:'changeCount';count:number} | {type:'setStrength';strength:number} | {type:'reset'} | {type:'setTurnMode';enabled:boolean} | {type:'endTurn';clientId:string}
 
 function getRoomId() {
   const url = new URL(window.location.href)
@@ -14,6 +14,13 @@ function getRoomId() {
     history.replaceState(null,'',url)
   }
   return room
+}
+
+function getClientId() {
+  const key='balance-dice-client-id'
+  let id=localStorage.getItem(key)
+  if(!id){id=crypto.randomUUID();localStorage.setItem(key,id)}
+  return id
 }
 
 function makeDistribution(count: number) {
@@ -31,14 +38,16 @@ function Die({value, rolling}:{value:number; rolling:boolean}) {
 }
 
 export default function App() {
-  const [roomId]=useState(getRoomId), [state,setState]=useState<RoomState|null>(null)
+  const [roomId]=useState(getRoomId), [clientId]=useState(getClientId), [state,setState]=useState<RoomState|null>(null)
   const [connection,setConnection]=useState<'connecting'|'connected'|'offline'>('connecting')
-  const [rolling,setRolling]=useState(false), socketRef=useRef<WebSocket|null>(null), reconnectRef=useRef<number>(0)
-  const {count=2,dice=[3,4],history=[],strength=65}=state??{}
+  const [rolling,setRolling]=useState(false), socketRef=useRef<WebSocket|null>(null), reconnectRef=useRef<number>(0), rollLockRef=useRef(false), rollTimeoutRef=useRef<number>(0)
+  const {count=2,dice=[3,4],history=[],strength=65,turnMode=false,turnOwner=null}=state??{}
+  const ownsTurn=turnOwner===clientId, turnLocked=turnMode&&Boolean(turnOwner)&&!ownsTurn
   const send=useCallback((action:RoomAction)=>{
-    if(socketRef.current?.readyState!==WebSocket.OPEN)return
+    if(socketRef.current?.readyState!==WebSocket.OPEN)return false
     socketRef.current.send(JSON.stringify(action))
     if(action.type==='roll')setRolling(true)
+    return true
   },[])
 
   useEffect(()=>{
@@ -57,17 +66,21 @@ export default function App() {
             if(previous&&message.state.history.length>previous.history.length)setRolling(true)
             return message.state
           })
-          window.setTimeout(()=>setRolling(false),420)
+          clearTimeout(rollTimeoutRef.current)
+          window.setTimeout(()=>{setRolling(false);rollLockRef.current=false},420)
         } catch { /* Ignore malformed server messages. */ }
       }
       socket.onclose=()=>{
         if(stopped)return
+        rollLockRef.current=false
+        clearTimeout(rollTimeoutRef.current)
+        setRolling(false)
         setConnection('offline')
         reconnectRef.current=window.setTimeout(connect,1500)
       }
     }
     connect()
-    return()=>{stopped=true;clearTimeout(reconnectRef.current);socket?.close()}
+    return()=>{stopped=true;clearTimeout(reconnectRef.current);clearTimeout(rollTimeoutRef.current);socket?.close()}
   },[roomId])
   const distribution=useMemo(()=>makeDistribution(count),[count])
   const stats=useMemo(()=>{
@@ -81,7 +94,13 @@ export default function App() {
     return rows.map(r=>({...r,adjusted:r.adjusted/weight}))
   },[count,distribution,history,strength])
 
-  const roll=useCallback(()=>{if(!rolling&&connection==='connected')send({type:'roll'})},[connection,rolling,send])
+  const roll=useCallback(()=>{
+    if(rollLockRef.current||rolling||connection!=='connected'||turnLocked||(turnMode&&ownsTurn))return
+    if(!send({type:'roll',clientId}))return
+    rollLockRef.current=true
+    clearTimeout(rollTimeoutRef.current)
+    rollTimeoutRef.current=window.setTimeout(()=>{rollLockRef.current=false;setRolling(false)},3000)
+  },[clientId,connection,ownsTurn,rolling,send,turnLocked,turnMode])
   useEffect(()=>{
     const onKey=(e:KeyboardEvent)=>{
       const target=e.target as HTMLElement
@@ -94,29 +113,32 @@ export default function App() {
   const changeCount=(n:number)=>send({type:'changeCount',count:n})
   const share=async()=>{await navigator.clipboard.writeText(location.href);setCopied(true);window.setTimeout(()=>setCopied(false),1600)}
   const [copied,setCopied]=useState(false)
-  const max=Math.max(...stats.flatMap(r=>[r.adjusted,r.base,r.actual])), sum=dice.reduce((a,b)=>a+b,0)
+  const max=Math.max(...stats.flatMap(r=>[r.adjusted,r.base])), sum=dice.reduce((a,b)=>a+b,0)
+  const topThree=useMemo(()=>[...stats].sort((a,b)=>b.adjusted-a.adjusted||a.sum-b.sum).slice(0,3),[stats])
 
   return <main>
     <header><div className="brand"><b>⚄</b> Balance Dice</div><div className="room-tools"><span className={`status ${connection}`}>{connection==='connected'?'共有中':connection==='connecting'?'接続中':'再接続中'}</span><button className="share" onClick={share}>{copied?'コピーしました':'招待リンクをコピー'}</button><button className="reset" onClick={()=>send({type:'reset'})} disabled={!history.length}>↻　リセット</button></div></header>
     <section className="hero">
-      <div className="dice-stage"><div className="dice-row">{dice.map((v,i)=><Die key={i} value={v} rolling={rolling}/>)}</div><small>合計 <strong>{sum}</strong></small></div>
-      <button className="roll" onClick={roll} disabled={rolling||connection!=='connected'}><span>⚄</span>{connection!=='connected'?'ルームに接続中…':rolling?'抽選中…':'サイコロを振る'}</button><div className="shortcut">Room: {roomId} ・ Space キーでも振れます</div>
+      <div className="dice-stage"><div className="dice-row">{dice.map((v,i)=><Die key={i} value={v} rolling={rolling}/>)}</div><div className="sum-display"><span>合計</span><strong>{sum}</strong></div></div>
+      <div className="recent-results"><span>直近の結果</span>{history.length?<div>{history.slice(-3).reverse().map((value,index)=><b key={`${history.length-index}-${value}`} className={index===0?'latest':''}>{value}</b>)}</div>:<small>まだ結果がありません</small>}</div>
+      <div className="roll-actions"><button className={`roll ${turnMode&&ownsTurn?'turn-end':''}`} onClick={turnMode&&ownsTurn?()=>send({type:'endTurn',clientId}):roll} disabled={rolling||connection!=='connected'||turnLocked}><span>{turnMode&&ownsTurn?'✓':'⚄'}</span>{connection!=='connected'?'ルームに接続中…':turnLocked?'他の人のターンです':rolling?'抽選中…':turnMode&&ownsTurn?'ターン終了':'サイコロを振る'}</button><button className="undo" onClick={()=>send({type:'undo',clientId})} disabled={rolling||!history.length||turnLocked} aria-label="直前の結果を取り消す">↶　1回戻す</button></div><div className="shortcut">Room: {roomId} ・ Space キーでも振れます</div>
     </section>
     <section className="dashboard">
+      <div className="chart-card card">
+        <div className="chart-head"><h2>次回の確率</h2></div>
+        <div className="chart-scroll"><div className={`chart ${stats.length>15?'dense':''}`}>
+          <div className="grid"><span>20%</span><span>15%</span><span>10%</span><span>5%</span><span>0%</span></div>
+          <div className="bars">{stats.map(r=>{const rank=topThree.findIndex(item=>item.sum===r.sum);return <div className="bar-group" key={r.sum} title={`${rank>=0?`Top ${rank+1}｜`:''}合計 ${r.sum}｜次回 ${(r.adjusted*100).toFixed(1)}%`}><em>{(r.adjusted*100).toFixed(1)}%</em><div className="track"><div className="base" style={{height:`${r.base/max*90}%`}}/><div className={`fill ${rank>=0?`rank-${rank+1}`:''}`} style={{height:`${r.adjusted/max*90}%`}}/></div><b>{r.sum}</b></div>})}</div>
+        </div></div>
+        <div className="chart-meta"><div className="legend"><span><i className="gold"/>Top 1</span><span><i className="silver"/>Top 2</span><span><i className="bronze"/>Top 3</span><span><i className="purple"/>補正後</span><span><i/>理論値</span></div></div>
+      </div>
       <div className="controls card">
         <div><label>サイコロの個数</label><div className="stepper"><button disabled={count===1} onClick={()=>changeCount(count-1)}>−</button><strong>{count}</strong><span>個</span><button disabled={count===6} onClick={()=>changeCount(count+1)}>＋</button></div></div>
         <div className="divider"/>
         <div className="strength"><div className="label-row"><label>補正の強さ</label><b>{strength}%</b></div><input type="range" min="0" max="100" value={strength} onChange={e=>send({type:'setStrength',strength:+e.target.value})} style={{'--value':`${strength}%`} as React.CSSProperties}/><div className="range-label"><span>自然</span><span>強く補正</span></div></div>
         <div className="divider"/><div className="trials"><label>試行回数</label><strong>{history.length}<small> 回</small></strong></div>
       </div>
-      <div className="chart-card card">
-        <div className="chart-head"><div><h2>確率とこれまでの結果</h2><p>次回の確率と、実際に出た合計値の割合を比較できます。</p></div><div className="legend"><span><i className="purple"/>補正後</span><span><i className="orange"/>実績</span><span><i/>理論値</span></div></div>
-        <div className="chart-scroll"><div className="chart" style={{minWidth:Math.max(620,stats.length*58)}}>
-          <div className="grid"><span>20%</span><span>15%</span><span>10%</span><span>5%</span><span>0%</span></div>
-          <div className="bars">{stats.map(r=><div className="bar-group" key={r.sum} title={`合計 ${r.sum}｜補正後 ${(r.adjusted*100).toFixed(2)}%｜実績 ${(r.actual*100).toFixed(2)}%（${r.actualCount}回）`}><em>{(r.adjusted*100).toFixed(1)}%</em><div className="track"><div className="base" style={{height:`${r.base/max*90}%`}}/><div className="fill" style={{height:`${r.adjusted/max*90}%`}}/><div className="actual" style={{height:`${r.actual/max*90}%`}}/></div><b>{r.sum}</b></div>)}</div>
-        </div></div>
-        <div className="chart-foot"><span>合計値</span><p>↗　確率は出目の偏りに応じて毎回更新されます</p></div>
-      </div>
+      <div className="turn-control card"><div><strong>ターン制モード</strong><p>振った人が「ターン終了」を押すまで、ほかの人は振れません。</p></div><label className="switch"><input type="checkbox" checked={turnMode} onChange={e=>send({type:'setTurnMode',enabled:e.target.checked})}/><span/></label></div>
     </section>
   </main>
 }

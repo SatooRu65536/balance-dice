@@ -4,15 +4,21 @@ type RoomState = {
   count: number
   dice: number[]
   history: number[]
+  diceHistory?: number[][]
   strength: number
   revision: number
+  turnMode?: boolean
+  turnOwner?: string | null
 }
 
 type RoomAction =
-  | { type: 'roll' }
+  | { type: 'roll'; clientId?: string }
   | { type: 'changeCount'; count: number }
   | { type: 'setStrength'; strength: number }
+  | { type: 'undo'; clientId: string }
   | { type: 'reset' }
+  | { type: 'setTurnMode'; enabled: boolean }
+  | { type: 'endTurn'; clientId: string }
 
 interface Env {
   ASSETS: Fetcher
@@ -23,8 +29,11 @@ const initialState = (): RoomState => ({
   count: 2,
   dice: [3, 4],
   history: [],
+  diceHistory: [],
   strength: 65,
   revision: 0,
+  turnMode: false,
+  turnOwner: null,
 })
 
 function distribution(count: number) {
@@ -94,14 +103,25 @@ export class DiceRoom extends DurableObject<Env> {
     const state = await this.getState()
 
     if (action.type === 'roll') {
+      if (state.turnMode && (!action.clientId || (state.turnOwner && state.turnOwner !== action.clientId))) {
+        _socket.send(JSON.stringify({ type: 'state', state }))
+        return
+      }
       const dice = rollDice(state)
-      this.roomState = { ...state, dice, history: [...state.history, dice.reduce((a, b) => a + b, 0)], revision: state.revision + 1 }
+      this.roomState = { ...state, dice, diceHistory: [...(state.diceHistory ?? []), state.dice], history: [...state.history, dice.reduce((a, b) => a + b, 0)], turnOwner: state.turnMode ? action.clientId! : null, revision: state.revision + 1 }
+    } else if (action.type === 'undo' && state.history.length && (!state.turnMode || !state.turnOwner || state.turnOwner === action.clientId)) {
+      const diceHistory = state.diceHistory ?? []
+      this.roomState = { ...state, dice: diceHistory.at(-1) ?? state.dice, diceHistory: diceHistory.slice(0, -1), history: state.history.slice(0, -1), revision: state.revision + 1 }
     } else if (action.type === 'changeCount' && Number.isInteger(action.count) && action.count >= 1 && action.count <= 6) {
-      this.roomState = { ...state, count: action.count, dice: Array.from({ length: action.count }, () => Math.ceil(Math.random() * 6)), history: [], revision: state.revision + 1 }
+      this.roomState = { ...state, count: action.count, dice: Array.from({ length: action.count }, () => Math.ceil(Math.random() * 6)), history: [], diceHistory: [], turnOwner: null, revision: state.revision + 1 }
     } else if (action.type === 'setStrength' && Number.isFinite(action.strength) && action.strength >= 0 && action.strength <= 100) {
       this.roomState = { ...state, strength: action.strength, revision: state.revision + 1 }
     } else if (action.type === 'reset') {
-      this.roomState = { ...state, history: [], revision: state.revision + 1 }
+      this.roomState = { ...state, history: [], diceHistory: [], turnOwner: null, revision: state.revision + 1 }
+    } else if (action.type === 'setTurnMode' && typeof action.enabled === 'boolean') {
+      this.roomState = { ...state, turnMode: action.enabled, turnOwner: null, revision: state.revision + 1 }
+    } else if (action.type === 'endTurn' && state.turnMode && state.turnOwner === action.clientId) {
+      this.roomState = { ...state, turnOwner: null, revision: state.revision + 1 }
     } else return
 
     await this.ctx.storage.put('state', this.roomState)
