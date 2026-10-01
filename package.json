@@ -8,7 +8,7 @@
     "dev:room": "pnpm build && wrangler dev",
     "build": "tsc -b && vite build",
     "typecheck:worker": "tsc -p worker/tsconfig.json",
-    "cf:deploy": "wrangler deploy",
+    "cf:deploy": "pnpm build && wrangler deploy",
     "lint": "oxlint",
     "preview": "vite preview"
   },

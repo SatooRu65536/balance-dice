@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import "./App.css";
 
 const PIPS: Record<number, number[]> = {
@@ -354,11 +361,17 @@ export default function App() {
                       <div className="track">
                         <div
                           className="base"
-                          style={{ height: `${(r.base / max) * 90}%` }}
+                          style={
+                            { "--size": `${(r.base / max) * 90}%` } as CSSProperties
+                          }
                         />
                         <div
                           className={`fill ${rank >= 0 ? `rank-${rank + 1}` : ""}`}
-                          style={{ height: `${(r.adjusted / max) * 90}%` }}
+                          style={
+                            {
+                              "--size": `${(r.adjusted / max) * 90}%`,
+                            } as CSSProperties
+                          }
                         />
                       </div>
                       <b>{r.sum}</b>
