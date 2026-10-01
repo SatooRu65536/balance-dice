@@ -245,6 +245,7 @@ export default function App() {
     setJoinCode("");
   };
   const max = Math.max(...stats.flatMap((r) => [r.adjusted, r.base])),
+    maxCount = Math.max(...stats.map((r) => r.actualCount)),
     sum = dice.reduce((a, b) => a + b, 0);
   const topThree = useMemo(
     () =>
@@ -347,7 +348,11 @@ export default function App() {
             <h2>次回の確率</h2>
           </div>
           <div className="chart-scroll">
-            <div className={`chart ${stats.length > 15 ? "dense" : ""}`}>
+            <div
+              className={`chart ${stats.length > 15 ? "dense" : ""}`}
+              style={{ "--grid": `${(0.1 / max) * 90}%` } as CSSProperties}
+            >
+              <div className="grid" aria-hidden="true" />
               <div className="bars">
                 {stats.map((r) => {
                   const rank = topThree.findIndex((item) => item.sum === r.sum);
@@ -512,6 +517,36 @@ export default function App() {
             />
             <span />
           </label>
+        </div>
+        <div className="tally-card card">
+          <div className="tally-head">
+            <h2>出目の集計</h2>
+            <span>全 {history.length} 回</span>
+          </div>
+          <div className="tally">
+            {[...stats]
+              .sort((a, b) => b.actualCount - a.actualCount || a.sum - b.sum)
+              .map((r) => (
+              <div
+                className={`tally-item ${r.actualCount && r.actualCount === maxCount ? "most" : ""}`}
+                key={r.sum}
+              >
+                <b>{r.sum}</b>
+                <strong>
+                  {r.actualCount}
+                  <small> 回</small>
+                </strong>
+                <span>{(r.actual * 100).toFixed(1)}%</span>
+                <i
+                  style={
+                    {
+                      "--size": `${maxCount ? (r.actualCount / maxCount) * 100 : 0}%`,
+                    } as CSSProperties
+                  }
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </section>
     </main>
