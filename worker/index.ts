@@ -19,6 +19,7 @@ type RoomAction =
   | { type: 'reset' }
   | { type: 'setTurnMode'; enabled: boolean }
   | { type: 'endTurn'; clientId: string }
+  | { type: 'releaseTurn' }
 
 interface Env {
   ASSETS: Fetcher
@@ -121,6 +122,8 @@ export class DiceRoom extends DurableObject<Env> {
     } else if (action.type === 'setTurnMode' && typeof action.enabled === 'boolean') {
       this.roomState = { ...state, turnMode: action.enabled, turnOwner: null, revision: state.revision + 1 }
     } else if (action.type === 'endTurn' && state.turnMode && state.turnOwner === action.clientId) {
+      this.roomState = { ...state, turnOwner: null, revision: state.revision + 1 }
+    } else if (action.type === 'releaseTurn' && state.turnMode && state.turnOwner) {
       this.roomState = { ...state, turnOwner: null, revision: state.revision + 1 }
     } else return
 

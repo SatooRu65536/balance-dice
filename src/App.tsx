@@ -3,7 +3,7 @@ import './App.css'
 
 const PIPS: Record<number, number[]> = { 1:[4], 2:[0,8], 3:[0,4,8], 4:[0,2,6,8], 5:[0,2,4,6,8], 6:[0,2,3,5,6,8] }
 type RoomState = { count:number; dice:number[]; history:number[]; diceHistory?:number[][]; strength:number; revision:number; turnMode?:boolean; turnOwner?:string|null }
-type RoomAction = {type:'roll';clientId:string} | {type:'undo';clientId:string} | {type:'changeCount';count:number} | {type:'setStrength';strength:number} | {type:'reset'} | {type:'setTurnMode';enabled:boolean} | {type:'endTurn';clientId:string}
+type RoomAction = {type:'roll';clientId:string} | {type:'undo';clientId:string} | {type:'changeCount';count:number} | {type:'setStrength';strength:number} | {type:'reset'} | {type:'setTurnMode';enabled:boolean} | {type:'endTurn';clientId:string} | {type:'releaseTurn'}
 
 const ROOM_PATTERN=/^\d{6}$/
 
@@ -145,6 +145,7 @@ export default function App() {
           <div className="bars">{stats.map(r=>{const rank=topThree.findIndex(item=>item.sum===r.sum);return <div className="bar-group" key={r.sum} title={`${rank>=0?`Top ${rank+1}｜`:''}合計 ${r.sum}｜次回 ${(r.adjusted*100).toFixed(1)}%`}><em>{(r.adjusted*100).toFixed(1)}%</em><div className="track"><div className="base" style={{height:`${r.base/max*90}%`}}/><div className={`fill ${rank>=0?`rank-${rank+1}`:''}`} style={{height:`${r.adjusted/max*90}%`}}/></div><b>{r.sum}</b></div>})}</div>
         </div></div>
         <div className="chart-meta"><div className="legend"><span><i className="gold"/>Top 1</span><span><i className="silver"/>Top 2</span><span><i className="bronze"/>Top 3</span><span><i className="purple"/>補正後</span><span><i/>理論値</span></div></div>
+        {turnMode&&<div className="turn-release"><button onClick={()=>send({type:'releaseTurn'})} disabled={!turnLocked}>他の人のターンを解除</button></div>}
       </div>
       <div className="controls card">
         <div><label>サイコロの個数</label><div className="stepper"><button disabled={count===1} onClick={()=>changeCount(count-1)}>−</button><strong>{count}</strong><span>個</span><button disabled={count===6} onClick={()=>changeCount(count+1)}>＋</button></div></div>
