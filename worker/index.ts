@@ -137,7 +137,7 @@ export default {
     const url = new URL(request.url)
     if (url.pathname === '/api/room') {
       const room = url.searchParams.get('room')?.trim()
-      if (!room || room.length > 80 || !/^[\w-]+$/.test(room)) return new Response('Invalid room', { status: 400 })
+      if (!room || !/^\d{6}$/.test(room)) return new Response('Invalid room', { status: 400 })
       return env.DICE_ROOMS.get(env.DICE_ROOMS.idFromName(room)).fetch(request)
     }
     return env.ASSETS.fetch(request)
