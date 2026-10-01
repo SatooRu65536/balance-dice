@@ -81,6 +81,8 @@ function rollDice(state: RoomState): number[] {
   return dice
 }
 
+const ROOM_TTL_MS = 60 * 60 * 1000
+
 export class DiceRoom extends DurableObject<Env> {
   private roomState: RoomState | undefined
 
@@ -128,10 +130,21 @@ export class DiceRoom extends DurableObject<Env> {
     } else return
 
     await this.ctx.storage.put('state', this.roomState)
+    await this.ctx.storage.setAlarm(Date.now() + ROOM_TTL_MS)
     const payload = JSON.stringify({ type: 'state', state: this.roomState })
     for (const socket of this.ctx.getWebSockets()) {
       try { socket.send(payload) } catch { socket.close(1011, 'Broadcast failed') }
     }
+  }
+
+  async alarm() {
+    // 接続中のクライアントがいる間は消さずに延長する
+    if (this.ctx.getWebSockets().length) {
+      await this.ctx.storage.setAlarm(Date.now() + ROOM_TTL_MS)
+      return
+    }
+    this.roomState = undefined
+    await this.ctx.storage.deleteAll()
   }
 }
 
